@@ -1,37 +1,32 @@
 library(ranger)
-library(randomForestSRC)
-library(Rborist)
-library(h2o)
 library(xgboost)
 library(lightgbm)
 
 library(MetricsWeighted)
 library(splitTools)
 
-set.seed(1)
-n <- 10000
-x1 <- seq_len(n)
-x2 <- rnorm(n)
-x3 <- rexp(n)
-x4 <- runif(n)
-X <- cbind(x1, x2, x3, x4)
-y <- rnorm(n, x1 / 1000 + x2 / 10 + x3 / 5)
+source("r/functions.R")
 
+# Create data
+head(X <- make_X())
+head(y <- make_y(X, "poisson", strength = 1))
+barplot(table(y))
+
+mtry <- floor(sqrt(ncol(X)))
+mtry_p <- mtry / ncol(X)
+
+# Split into training and test
 idx <- partition(y, p = c(train = 0.7, valid = 0.3))
 X_train <- X[idx$train, ]
 y_train <- y[idx$train]
 X_valid <- X[idx$valid, ]
 y_valid <- y[idx$valid]
 
-mtry <- floor(sqrt(ncol(X)))
-mtry_p <- mtry / ncol(X)
-
 # XGB Random Forest
-
-system.time({
+system.time({ # 12
   param_xgb <- list(max_depth = 10,
                     learning_rate = 1,
-                    objective = "reg:linear",
+                    objective = "count:poisson",
                     subsample = 0.63,
                     lambda = 0,
                     alpha = 0,
@@ -52,13 +47,12 @@ system.time({
 
 
 # LGB Random Forest
-
-system.time({
+system.time({ # 3
   param_lgb <- list(boosting = "rf",
                     max_depth = 10,
                     num_leaves = 1000,
                     learning_rate = 1,
-                    objective = "regression",
+                    objective = "poisson",
                     bagging_fraction = 0.63,
                     bagging_freq = 1,
                     reg_lambda = 0,
@@ -69,7 +63,7 @@ system.time({
   dtrain_lgb <- lgb.Dataset(X_train, label = y_train)
   
   fit_lgb <- lgb.train(param_lgb,
-                       dtrain_lgb, nthread=8,
+                       dtrain_lgb,
                        verbose = -1,
                        nrounds = 500)
   
@@ -77,7 +71,7 @@ system.time({
 })
 
 # Ranger
-system.time({
+system.time({ # 0
   fit_ranger <- ranger(y = y_train, 
                        x = X_train, 
                        mtry = mtry,
@@ -85,48 +79,22 @@ system.time({
                        max.depth = 10, 
                        num.trees = 500)
   
-  pred_ranger <- predict(fit_rf, X_valid)$predictions
+  pred_ranger <- predict(fit_ranger, X_valid)$predictions
 })
 
-# Rborist
-system.time({
-  fit_rbor <- Rborist(x = X_train, 
-                      y = y_train, 
-                      nTree = 500, 
-                      autoCompress = mtry_p,  
-                      minInfo = 0,
-                      nLevel = 10,
-                      minNode = 5)
-  pred_rbor <- predict(fit_rbor, X_valid)$yPred
-})
-
-system.time({
-  fit_rfsrc <- rfsrc(reformulate(colnames(X_train), "y_train"), 
-                     data = data.frame(X_train, y_train), 
-                     mtry = mtry,
-                     ntree = 500, 
-                     nodedepth = 10,
-                     nodesize = 5,
-                     seed = 837363)
-  pred_rfsrc <- predict(fit_rfsrc, data.frame(X_valid))$predicted
-})
 
 # Evaluate predicitons
 pred <- data.frame(
   pred_xgb,
   pred_lgb,
-  pred_ranger,
-  pred_rbor,
-  pred_rfsrc
+  pred_ranger
 )
 
 summary(pred) 
 cor(pred)
-
-rmse <- function(pred, y) {
-  sqrt(mean((y - pred)^2))
-}
-
-sapply(pred, rmse, y_valid)
+sapply(pred, perf, "poisson")
+#             pred_xgb   pred_lgb pred_ranger
+# deviance  1.05753011 1.04356883  1.02037717
+# r_squared 0.04407729 0.05669717  0.07766058
 
 sessionInfo()
