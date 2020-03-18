@@ -8,32 +8,46 @@ library(splitTools)
 source("r/functions.R")
 
 # Create data
-head(X <- make_X())
-head(y <- make_y(X, "poisson", strength = 1))
-barplot(table(y))
+n <- 1e5
+m <- 20
+head(full <- make_X(n = n, m = m))
+dim(full)
+x <- colnames(full)
+y <- "y"
+full$y <- make_y(full, strength = 5, objective = "poisson")
+hist(full$y)
 
-mtry <- floor(sqrt(ncol(X)))
-mtry_p <- mtry / ncol(X)
+# Split into training and validation
+idx <- partition(full[[y]], p = c(train = 0.7, valid = 0.3))
 
-# Split into training and test
-idx <- partition(y, p = c(train = 0.7, valid = 0.3))
-X_train <- X[idx$train, ]
-y_train <- y[idx$train]
-X_valid <- X[idx$valid, ]
-y_valid <- y[idx$valid]
+train <- full[idx$train, ]
+valid <- full[idx$valid, ]
+
+X_train <- data.matrix(train[, x])
+X_valid <- data.matrix(valid[, x])
+
+y_train <- train[[y]]
+y_valid <- valid[[y]]
+
+# Random forest settings
+mtry <- floor(sqrt(m))
+mtry_p <- mtry / m
+ntrees <- 100
+node_size <- 5
+depth <- 20
 
 # XGB Random Forest
-system.time({ # 12
-  param_xgb <- list(max_depth = 10,
+system.time({ # 3
+  param_xgb <- list(max_depth = depth,
                     learning_rate = 1,
                     objective = "count:poisson",
                     subsample = 0.63,
                     lambda = 0,
                     alpha = 0,
-                    min_child_weight = 5,
+                    min_child_weight = node_size,
                     # tree_method = "hist",
                     # base_score
-                    # max_delta_step
+                    max_delta_step = 2,
                     colsample_bynode = mtry_p)
   
   dtrain_xgb <- xgb.DMatrix(X_train, label = y_train)
@@ -41,15 +55,15 @@ system.time({ # 12
   fit_xgb <- xgb.train(param_xgb,
                        dtrain_xgb,
                        nrounds = 1,
-                       num_parallel_tree = 500)
+                       num_parallel_tree = ntrees)
   pred_xgb <- predict(fit_xgb, X_valid)
 })
 
 
 # LGB Random Forest
-system.time({ # 3
+system.time({ # 10
   param_lgb <- list(boosting = "rf",
-                    max_depth = 10,
+                    max_depth = depth,
                     num_leaves = 1000,
                     learning_rate = 1,
                     objective = "poisson",
@@ -57,7 +71,7 @@ system.time({ # 3
                     bagging_freq = 1,
                     reg_lambda = 0,
                     reg_alpha = 0,
-                    min_data_in_leaf = 5,
+                    min_data_in_leaf = node_size,
                     colsample_bynode = mtry_p)
   
   dtrain_lgb <- lgb.Dataset(X_train, label = y_train)
@@ -65,19 +79,19 @@ system.time({ # 3
   fit_lgb <- lgb.train(param_lgb,
                        dtrain_lgb,
                        verbose = -1,
-                       nrounds = 500)
+                       nrounds = ntrees)
   
   pred_lgb <- predict(fit_lgb, X_valid)
 })
 
 # Ranger
-system.time({ # 0
-  fit_ranger <- ranger(y = y_train, 
-                       x = X_train, 
+system.time({ # 14
+  fit_ranger <- ranger(reformulate(x, y),
+                       data = train,
                        mtry = mtry,
-                       min.node.size = 5,
-                       max.depth = 10, 
-                       num.trees = 500)
+                       min.node.size = node_size,
+                       max.depth = depth, 
+                       num.trees = ntrees)
   
   pred_ranger <- predict(fit_ranger, X_valid)$predictions
 })
@@ -93,8 +107,9 @@ pred <- data.frame(
 summary(pred) 
 cor(pred)
 sapply(pred, perf, "poisson")
-#             pred_xgb   pred_lgb pred_ranger
-# deviance  1.05753011 1.04356883  1.02037717
-# r_squared 0.04407729 0.05669717  0.07766058
+#            pred_xgb   pred_lgb pred_ranger
+# deviance   3.470014 1.17156879  1.13810495
+# r_squared -1.788888 0.05839744  0.08529269
 
 sessionInfo()
+
