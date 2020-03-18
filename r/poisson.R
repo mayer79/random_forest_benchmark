@@ -47,7 +47,7 @@ system.time({ # 3
                     min_child_weight = node_size,
                     # tree_method = "hist",
                     # base_score
-                    max_delta_step = 2,
+                    #max_delta_step = 2,
                     colsample_bynode = mtry_p)
   
   dtrain_xgb <- xgb.DMatrix(X_train, label = y_train)
@@ -108,8 +108,8 @@ summary(pred)
 cor(pred)
 sapply(pred, perf, "poisson")
 #            pred_xgb   pred_lgb pred_ranger
-# deviance   3.470014 1.17156879  1.13810495
-# r_squared -1.788888 0.05839744  0.08529269
+# deviance   3.303889 1.17156879  1.13913418
+# r_squared -1.655372 0.05839744  0.08446549
 
 sessionInfo()
 
